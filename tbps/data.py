@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from functools import lru_cache
 from pathlib import Path
 import random
 
@@ -29,41 +30,50 @@ def build_transforms(training: bool, image_size=(384, 128), augmentation=True):
     return T.Compose(ops)
 
 
-def _records(root: Path):
-    for path in root.rglob("*.json"):
-        try:
-            obj = json.loads(path.read_text())
-        except Exception:
-            continue
+@lru_cache(maxsize=4)
+def _load_resolved_records(root_value: str):
+    """Read annotations once; resolve canonical RSTPReid paths without per-image tree scans."""
+    root = Path(root_value)
+    bases = [root, root / "RSTPReid", root / "rstpreid"]
+    anno = next((base / "data_captions.json" for base in bases
+                 if (base / "data_captions.json").is_file()), None)
+    if anno is not None:
+        obj = json.loads(anno.read_text())
         rows = obj if isinstance(obj, list) else next(
-            (obj[k] for k in ("annotations", "data", "images") if isinstance(obj, dict) and isinstance(obj.get(k), list)), None)
-        if rows and isinstance(rows[0], dict) and any(k in rows[0] for k in ("img_path", "file_path", "image_path")):
-            yield from rows
+            (obj[k] for k in ("annotations", "data", "images") if isinstance(obj.get(k), list)), [])
+        image_roots = [anno.parent, anno.parent / "imgs", anno.parent / "images"]
+    else:
+        parquet = next((p for base in bases if base.is_dir() for p in base.glob("*.parquet")), None)
+        if parquet is None:
+            raise RuntimeError(f"RSTPReid annotation data_captions.json not found under {root}. Set DATA_ROOT to the RSTPReid folder.")
+        rows = pd.read_parquet(parquet).to_dict("records")
+        image_roots = [parquet.parent, parquet.parent / "imgs", parquet.parent / "images"]
 
-
-def load_records(root: str | Path, split: str):
-    root = Path(root)
-    rows = list(_records(root))
-    if not rows:
-        for p in root.rglob("*.parquet"):
-            try:
-                rows.extend(pd.read_parquet(p).to_dict("records"))
-            except Exception:
-                pass
-    result = []
+    # Only build a recursive index if the common RSTPReid paths do not resolve.
+    resolved = []
+    missing = []
     for row in rows:
-        row_split = str(row.get("split", "")).lower()
-        if row_split and row_split not in {split, {"val": "validation", "validation": "val"}.get(split, split)}:
-            continue
         rel = row.get("img_path", row.get("file_path", row.get("image_path", row.get("image"))))
         if isinstance(rel, dict):
             rel = rel.get("path") or rel.get("filename")
         if not rel:
             continue
         p = Path(str(rel))
-        candidates = [p] if p.is_absolute() else [root / p, *root.rglob(p.name)]
-        image = next((c for c in candidates if c.is_file()), None)
+        image = p if p.is_absolute() and p.is_file() else next(
+            (base / p for base in image_roots if (base / p).is_file()), None)
         if image is None:
+            missing.append((row, p.name))
+        else:
+            resolved.append((row, image))
+    if missing:
+        index = {p.name: p for p in root.rglob("*") if p.is_file() and p.suffix.lower() in {".jpg", ".jpeg", ".png"}}
+        resolved.extend((row, index[name]) for row, name in missing if name in index)
+
+    by_split = {"train": {}, "val": {}, "test": {}}
+    for row, image in resolved:
+        split = str(row.get("split", "train")).lower()
+        split = "val" if split in {"val", "validation", "valid"} else split
+        if split not in by_split:
             continue
         captions = row.get("captions", row.get("caption", row.get("texts", [])))
         if isinstance(captions, str):
@@ -74,19 +84,24 @@ def load_records(root: str | Path, split: str):
         if not isinstance(captions, list):
             captions = [str(captions)]
         captions = [str(c) for c in captions if c]
-        if captions:
-            result.append({"path": str(image), "pid": str(row.get("id", row.get("person_id", row.get("pid", image.stem.split("_")[0])))), "captions": captions})
-    # Deduplicate repeated annotation rows without dropping caption variants.
-    by_path = {}
-    for row in result:
-        if row["path"] in by_path:
-            by_path[row["path"]]["captions"] = list(dict.fromkeys(by_path[row["path"]]["captions"] + row["captions"]))
+        if not captions:
+            continue
+        path = str(image)
+        record = {"path": path, "pid": str(row.get("id", row.get("person_id", row.get("pid", image.stem.split("_")[0])))), "captions": captions}
+        if path in by_split[split]:
+            old = by_split[split][path]
+            old["captions"] = list(dict.fromkeys(old["captions"] + captions))
         else:
-            by_path[row["path"]] = row
-    result = list(by_path.values())
-    if not result:
-        raise RuntimeError(f"No images/captions for split={split} under {root}. Inspect Kaggle dataset files and set DATA_ROOT to the extracted dataset directory.")
-    return result
+            by_split[split][path] = record
+    return {split: list(records.values()) for split, records in by_split.items()}
+
+
+def load_records(root: str | Path, split: str):
+    split = "val" if split in {"validation", "valid"} else split
+    records = _load_resolved_records(str(Path(root).resolve())).get(split, [])
+    if not records:
+        raise RuntimeError(f"No RSTPReid images/captions found for split={split} under {root}.")
+    return records
 
 
 class PersonTextDataset(Dataset):
