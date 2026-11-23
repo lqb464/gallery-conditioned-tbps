@@ -4,11 +4,11 @@ import argparse, random
 from pathlib import Path
 import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 import open_clip
 
-from .data import PersonTextDataset, load_records
+from .data import IdentityBatchSampler, PersonTextDataset, load_records
 from .model import GalleryCLIP
 from .evaluate import evaluate
 
@@ -39,7 +39,8 @@ def main():
     train_ds = PersonTextDataset(load_records(args.data_root, "train"), preprocess, tok)
     val_rows = load_records(args.data_root, "val")
     val_ds = PersonTextDataset(val_rows, preprocess, tok)
-    loader = DataLoader(train_ds, batch_size=args.batch_size, sampler=RandomSampler(train_ds, replacement=True, num_samples=len(train_ds)), num_workers=args.workers, pin_memory=True, drop_last=True)
+    batch_sampler = IdentityBatchSampler(train_ds, args.batch_size)
+    loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.workers, pin_memory=True)
     optim = torch.optim.AdamW([{"params": model.clip.parameters(), "lr": args.lr}, {"params": model.gallery.parameters(), "lr": args.context_lr}], weight_decay=0.05)
     scaler = torch.amp.GradScaler("cuda", enabled=device == "cuda")
     out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True); best = -1

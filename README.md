@@ -10,7 +10,7 @@ The dataset loader accepts RSTPReid JSON annotation files with records containin
 
 ## Method
 
-Each training batch is a gallery group of images sampled from multiple identities. The gallery encoder self-attends across the entire batch; identity labels are used only for multi-positive image-text contrastive loss, never to construct attention masks. Validation/test retrieval encodes the complete split gallery, contextualizes its features once, then ranks each caption against the contextualized gallery. A changed gallery composition therefore requires recomputing contextual features, while original CLIP image features can be cached.
+Each training batch is a gallery group sampled as P identities × K images (K=4 by default). The gallery encoder self-attends across the entire batch; identity labels are used only for multi-positive image-text contrastive loss, never to construct attention masks. Validation/test retrieval encodes the complete split gallery, contextualizes its features once, then ranks each caption against the contextualized gallery. A changed gallery composition therefore requires recomputing contextual features, while original CLIP image features can be cached.
 
 The model is a research prototype. This checkout did not contain the pre-existing codebase or pretrained project checkpoint described in the task brief, so this implementation is built from scratch using OpenCLIP's public pretrained weights. No benchmark result is claimed until the Kaggle notebook is run.
 

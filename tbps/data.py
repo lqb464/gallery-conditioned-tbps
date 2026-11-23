@@ -7,7 +7,7 @@ import random
 import pandas as pd
 from PIL import Image
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Sampler
 
 
 def _records(root: Path):
@@ -83,3 +83,34 @@ class PersonTextDataset(Dataset):
         image = self.preprocess(Image.open(r["path"]).convert("RGB"))
         caption = random.choice(r["captions"])
         return image, self.tokenizer([caption])[0], self.pid_to_label[r["pid"]]
+
+
+class IdentityBatchSampler(Sampler[list[int]]):
+    """Make P x K image groups so every training gallery has true positives."""
+
+    def __init__(self, dataset: PersonTextDataset, batch_size: int, images_per_identity: int = 4):
+        self.batch_size = batch_size
+        self.k = images_per_identity
+        self.p = batch_size // images_per_identity
+        if self.p < 2:
+            raise ValueError("batch_size must fit at least two identities")
+        self.by_identity: dict[int, list[int]] = {}
+        for idx, row in enumerate(dataset.records):
+            label = dataset.pid_to_label[row["pid"]]
+            self.by_identity.setdefault(label, []).append(idx)
+
+    def __len__(self):
+        return max(1, sum(map(len, self.by_identity.values())) // self.batch_size)
+
+    def __iter__(self):
+        identities = list(self.by_identity)
+        for _ in range(len(self)):
+            chosen = random.sample(identities, self.p)
+            batch = []
+            for pid in chosen:
+                candidates = self.by_identity[pid]
+                if len(candidates) >= self.k:
+                    batch.extend(random.sample(candidates, self.k))
+                else:
+                    batch.extend(random.choices(candidates, k=self.k))
+            yield batch
