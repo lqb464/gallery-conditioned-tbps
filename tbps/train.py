@@ -68,14 +68,17 @@ def main():
     args = ap.parse_args()
     random.seed(args.seed); torch.manual_seed(args.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    clip, _, _ = open_clip.create_model_and_transforms(args.model, pretrained=args.pretrained,
-                                                       force_image_size=tuple(args.image_size))
+    # Validate/read the small annotation JSON before downloading CLIP weights.
+    train_records = load_records(args.data_root, "train")
+    val_records = load_records(args.data_root, "val")
+    clip, _, _ = open_clip.create_model_and_transforms(
+        args.model, pretrained=args.pretrained, force_image_size=tuple(args.image_size),
+        force_quick_gelu=True)
     tok = open_clip.get_tokenizer(args.model)
     train_transform = build_transforms(True, tuple(args.image_size), augmentation=True)
     eval_transform = build_transforms(False, tuple(args.image_size))
-    train_ds = PersonTextDataset(load_records(args.data_root, "train"), train_transform, tok, training=True)
-    val_rows = load_records(args.data_root, "val")
-    val_ds = PersonTextDataset(val_rows, eval_transform, tok)
+    train_ds = PersonTextDataset(train_records, train_transform, tok, training=True)
+    val_ds = PersonTextDataset(val_records, eval_transform, tok)
     model = GalleryCLIP(clip, num_classes=len(train_ds.pid_to_label),
                         layers=args.gallery_layers, heads=args.gallery_heads,
                         ff_dim=args.gallery_ff_dim, dropout=args.gallery_dropout,

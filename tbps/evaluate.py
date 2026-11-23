@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import torch
 from tqdm import tqdm
 
@@ -59,10 +60,15 @@ def main():
     from .data import PersonTextDataset, build_transforms, load_records
     from .model import GalleryCLIP
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    if not Path(args.checkpoint).is_file():
+        raise FileNotFoundError(
+            f"Checkpoint not found: {args.checkpoint}. Training must finish successfully before evaluation.")
     ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     cfg = ckpt["args"]
     image_size = tuple(cfg["image_size"])
-    clip, _, _ = open_clip.create_model_and_transforms(cfg["model"], pretrained=cfg["pretrained"], force_image_size=image_size)
+    clip, _, _ = open_clip.create_model_and_transforms(
+        cfg["model"], pretrained=cfg["pretrained"], force_image_size=image_size,
+        force_quick_gelu=True)
     model = GalleryCLIP(clip, num_classes=ckpt["num_classes"],
                         layers=cfg["gallery_layers"], heads=cfg["gallery_heads"],
                         ff_dim=cfg["gallery_ff_dim"], dropout=cfg["gallery_dropout"],
