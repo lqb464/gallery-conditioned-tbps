@@ -1,0 +1,31 @@
+# Reference recipe: official IRRA CLIP TBPS settings adapted to RSTPReid.
+# Gallery self-attention is the only new model component.
+model: ViT-B-16
+pretrained: openai
+image_size: [384, 128]
+text_length: 77
+
+epochs: 60
+batch_size: 64
+num_instances: 4
+accumulation_steps: 1
+workers: 4
+seed: 17
+
+optimizer: Adam
+lr: 0.00001
+weight_decay: 0.00004
+temperature: 0.02
+bias_lr_factor: 2.0
+gallery_lr_factor: 5.0
+warmup_epochs: 5
+warmup_factor: 0.1
+scheduler: cosine
+
+losses: [sdm, id]
+gallery_context: true
+gallery_layers: 2
+gallery_heads: 8
+gallery_ff_dim: 2048
+gallery_dropout: 0.1
+gallery_residual: true

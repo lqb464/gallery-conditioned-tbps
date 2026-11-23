@@ -8,6 +8,25 @@ import pandas as pd
 from PIL import Image
 import torch
 from torch.utils.data import Dataset, Sampler
+from torchvision import transforms as T
+
+
+CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
+CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+
+
+def build_transforms(training: bool, image_size=(384, 128), augmentation=True):
+    """IRRA/CLIP TBPS preprocessing at the ReID aspect ratio."""
+    h, w = image_size
+    if not training:
+        return T.Compose([T.Resize((h, w)), T.ToTensor(), T.Normalize(CLIP_MEAN, CLIP_STD)])
+    ops = [T.Resize((h, w)), T.RandomHorizontalFlip(0.5)]
+    if augmentation:
+        ops += [T.Pad(10), T.RandomCrop((h, w))]
+    ops += [T.ToTensor(), T.Normalize(CLIP_MEAN, CLIP_STD)]
+    if augmentation:
+        ops += [T.RandomErasing(p=0.5, scale=(0.02, 0.4), value=CLIP_MEAN)]
+    return T.Compose(ops)
 
 
 def _records(root: Path):
@@ -71,10 +90,16 @@ def load_records(root: str | Path, split: str):
 
 
 class PersonTextDataset(Dataset):
-    def __init__(self, records, preprocess, tokenizer):
-        self.records, self.preprocess, self.tokenizer = records, preprocess, tokenizer
+    def __init__(self, records, preprocess, tokenizer, training=False):
+        self.preprocess, self.tokenizer = preprocess, tokenizer
         pids = sorted({r["pid"] for r in records})
         self.pid_to_label = {p: i for i, p in enumerate(pids)}
+        if training:
+            # Match the original protocol: each image-caption pair is a sample.
+            self.records = [dict(path=r["path"], pid=r["pid"], captions=[c])
+                            for r in records for c in r["captions"]]
+        else:
+            self.records = records
 
     def __len__(self): return len(self.records)
 
