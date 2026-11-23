@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 import random
@@ -37,6 +38,18 @@ def _load_resolved_records(root_value: str):
     bases = [root, root / "RSTPReid", root / "rstpreid"]
     anno = next((base / "data_captions.json" for base in bases
                  if (base / "data_captions.json").is_file()), None)
+    if anno is None:
+        # Kaggle mirrors sometimes add wrapper folders around the canonical
+        # RSTPReid directory. Search shallowly by annotation filename, pruning
+        # image folders so this never walks thousands of image files.
+        for current, dirs, files in os.walk(root):
+            depth = len(Path(current).relative_to(root).parts)
+            dirs[:] = [d for d in dirs if d.lower() not in {"imgs", "images"}]
+            if "data_captions.json" in files:
+                anno = Path(current) / "data_captions.json"
+                break
+            if depth >= 5:
+                dirs.clear()
     if anno is not None:
         obj = json.loads(anno.read_text())
         rows = obj if isinstance(obj, list) else next(
