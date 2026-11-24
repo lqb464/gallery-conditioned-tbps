@@ -1,25 +1,49 @@
-# Gallery-Conditioned CLIP for Text-Based Person Search
+# Gallery-Conditioned CLIP for Text-Based Person Retrieval
 
-Minimal RSTPReid implementation of Approach A, aligned to the [official CLIP TBPS/IRRA implementation](https://github.com/anosorae/IRRA): OpenAI CLIP ViT-B/16, 384×128 ReID images, 77-token text context, identity-balanced batch 64, SDM + ID losses, Adam at 1e-5, weight decay 4e-5, and cosine decay with five warmup epochs. The two-layer gallery Transformer is the new component and uses five times the base learning rate.
+This repository incorporates IRRA implementation files copied from the supplied backup folder. The backup itself was left untouched. The copied source is under the MIT license; see `LICENSE` and the upstream README copy in `docs/`.
 
-## Kaggle quick start
+## What is being compared
 
-Open `notebooks/kaggle_rstpreid.ipynb` in Kaggle. Enable a GPU accelerator (T4 x2 is supported), attach the `hoanggv/tbps-benchmark` dataset, set `DATA_ROOT` to its mounted directory, then run all cells. Mixed precision is enabled. One T4 processes each complete gallery-context batch; the second GPU remains idle so attention can cover the whole group. Checkpoints and retrieval metrics are saved under `/kaggle/working/gallery_tbps/`.
+- **IRRA baseline:** original model path, with `--gallery_context` omitted.
+- **IRRA + Gallery Context:** the same CLIP image/text encoders and IRRA SDM/ID losses, with a two-layer, permutation-equivariant Transformer over a set of images. During training it sees an identity-balanced batch; during evaluation it sees the complete gallery split.
 
-The dataset loader accepts RSTPReid JSON annotation files with records containing `id`, `img_path`/`file_path`, `captions`, and `split`; it also accepts Hugging Face `datasets` parquet exports with those columns. Paths are resolved relative to `DATA_ROOT`.
+Gallery membership/order is not given identity labels or positional embeddings. Thus attention is permutation-equivariant. The contextualized image embedding is compared to the original text embedding. The evaluation gallery must be fixed for contextual features to remain valid.
 
-## Method
+This is a research experiment, not a reported SOTA result. Training and evaluation have not been run in this environment because PyTorch/CUDA and the dataset are unavailable here.
 
-Each training batch is a gallery group sampled as 16 identities × 4 image-caption pairs. The gallery encoder self-attends across the entire batch; identity labels affect SDM and ID losses only, never attention masks. Validation/test retrieval encodes the complete split gallery, contextualizes its features once, then ranks each caption against the contextualized gallery. A changed gallery composition therefore requires recomputing contextual features, while original CLIP image features can be cached.
+## Kaggle
 
-The model is a research prototype. This checkout did not contain the pre-existing codebase or pretrained project checkpoint described in the task brief, so this implementation is built from scratch using OpenCLIP's public pretrained weights. No benchmark result is claimed until the Kaggle notebook is run.
+Open `notebooks/kaggle_rstpreid.ipynb`, attach Kaggle dataset `hoanggv/tbps-benchmark`, and enable GPU. The notebook first trains the original IRRA baseline and then the Gallery Context variant on RSTPReid. It uses one GPU (T4 x2 allocation is fine), batch size 32, and validates on the RSTPReid validation split. Test evaluation uses each best validation checkpoint.
 
-## Local commands
+The dataset root passed to IRRA should contain `RSTPReid/data_captions.json` and `RSTPReid/imgs/`. Adjust `DATA_ROOT` in the notebook if Kaggle mounts this dataset at a different path.
+
+## Manual commands
+
+Baseline:
 
 ```bash
-pip install -r requirements.txt
-python -m tbps.train --config configs/clip_tbps_rstpreid.yaml --data-root /path/to/RSTPReid --output-dir runs/gallery
-python -m tbps.evaluate --data-root /path/to/RSTPReid --checkpoint runs/gallery/best.pt --split test
+python train.py --dataset_name RSTPReid --root_dir /path/to/data --output_dir runs \
+  --name irra_baseline --val_dataset val --loss_names sdm+id \
+  --sampler identity --num_instance 4 --batch_size 32 --num_workers 2
 ```
 
-Training selects the best checkpoint by validation text-to-image R@1. Evaluation reports text-to-image R@1/5/10, mAP, and mINP, plus image-to-text R@1/5/10. The notebook is the recommended entry point for Kaggle.
+Gallery Context:
+
+```bash
+python train.py --dataset_name RSTPReid --root_dir /path/to/data --output_dir runs \
+  --name gallery_context --val_dataset val --loss_names sdm+id \
+  --sampler identity --num_instance 4 --batch_size 32 --num_workers 2 \
+  --gallery_context --gallery_context_depth 2 --gallery_context_heads 8
+```
+
+The baseline is the default. Gallery Context requires identity sampling and `batch_size` divisible by `num_instance`. Inference command (replace the path with the timestamped run directory printed by training):
+
+```bash
+python test.py --config_file runs/RSTPReid/<run-name>/configs.yaml
+```
+
+The saved config restores whether Gallery Context is enabled.
+
+## Source and attribution
+
+The IRRA files originate from the backup supplied for this task and retain their upstream code headers/license notices. See [the upstream IRRA README copy](docs/IRRA_UPSTREAM_README.md). The accompanying license is retained in `LICENSE`.
