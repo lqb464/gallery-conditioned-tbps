@@ -33,7 +33,7 @@ if __name__ == '__main__':
         raise ValueError('--gallery_context requires --sampler identity so each training context is an identity-balanced gallery group')
     if args.gallery_context and args.batch_size % args.num_instance != 0:
         raise ValueError('--batch_size must be divisible by --num_instance when using --gallery_context')
-    set_seed(1+get_rank())
+    set_seed(args.seed + get_rank())
     name = args.name
 
     num_gpus = int(os.environ["WORLD_SIZE"]) if "WORLD_SIZE" in os.environ else 1
