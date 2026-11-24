@@ -89,7 +89,7 @@ class Evaluator():
 
         return qfeats, gfeats, qids, gids
     
-    def eval(self, model, i2t_metric=False):
+    def eval(self, model, i2t_metric=False, log=True, return_metrics=False):
         model = model.eval()
         qfeats, gfeats, qids, gids = self._compute_embedding(model)
 
@@ -113,6 +113,16 @@ class Evaluator():
         table.custom_format["R10"] = lambda f, v: f"{v:.3f}"
         table.custom_format["mAP"] = lambda f, v: f"{v:.3f}"
         table.custom_format["mINP"] = lambda f, v: f"{v:.3f}"
-        self.logger.info('\n' + str(table))
-        
-        return t2i_cmc[0]
+        if log:
+            self.logger.info('\n' + str(table))
+
+        metrics = {
+            'text_to_image_r1': float(t2i_cmc[0]),
+            'text_to_image_r5': float(t2i_cmc[4]),
+            'text_to_image_r10': float(t2i_cmc[9]),
+            'text_to_image_mAP': float(t2i_mAP),
+            'text_to_image_mINP': float(t2i_mINP),
+        }
+        if return_metrics:
+            return metrics
+        return metrics['text_to_image_r1']
