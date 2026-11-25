@@ -165,4 +165,8 @@ def build_model(args, num_classes=11003):
     model = IRRA(args, num_classes)
     # covert model to fp16
     convert_weights(model)
+    # Keep the newly initialized Gallery Context module in fp32. CLIP and
+    # IRRA's original heads retain the upstream half precision conversion.
+    if model.gallery_context_enabled:
+        model.gallery_context.float()
     return model

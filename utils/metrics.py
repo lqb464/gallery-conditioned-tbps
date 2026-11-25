@@ -70,38 +70,37 @@ class Evaluator():
         gids = torch.cat(gids, 0)
         gfeats = torch.cat(gfeats, 0)
 
-        # A caption can have several matching gallery images. The original
-        # evaluator batches images by batch size; a gallery transformer needs
-        # an image-level set, so collapse duplicate identities before context.
-        if getattr(model, 'gallery_context_enabled', False):
-            unique_gids, inverse = torch.unique(gids, sorted=True, return_inverse=True)
-            sums = gfeats.new_zeros((unique_gids.numel(), gfeats.shape[-1]))
-            sums.index_add_(0, inverse, gfeats)
-            counts = torch.bincount(inverse, minlength=unique_gids.numel()).to(gfeats.device)
-            gfeats = sums / counts.unsqueeze(1)
-            gids = unique_gids
-
-        # Gallery Context must see all gallery images together, independent of
-        # loader batch size. Keep this off for the original IRRA baseline.
+        # Keep raw CLIP features for the base row; Gallery Context attends over
+        # the complete image set and returns one contextualized feature per image.
+        base_gfeats, base_gids = gfeats, gids
         if getattr(model, 'gallery_context_enabled', False):
             with torch.no_grad():
-                gfeats = model.encode_gallery(gfeats)
+                gfeats = model.encode_gallery(base_gfeats)
 
-        return qfeats, gfeats, qids, gids
+        return qfeats, gfeats, qids, gids, base_gfeats, base_gids
     
     def eval(self, model, i2t_metric=False, log=True, return_metrics=False):
         model = model.eval()
-        qfeats, gfeats, qids, gids = self._compute_embedding(model)
+        qfeats, gfeats, qids, gids, base_gfeats, base_gids = self._compute_embedding(model)
 
         qfeats = F.normalize(qfeats.float(), p=2, dim=1) # text features
         gfeats = F.normalize(gfeats.float(), p=2, dim=1) # image features
+        base_gfeats = F.normalize(base_gfeats.float(), p=2, dim=1)
 
-        similarity = qfeats @ gfeats.t()
+        def retrieval_metrics(gallery_features, gallery_ids):
+            similarity = qfeats @ gallery_features.t()
+            cmc, mean_ap, mean_inp, _ = rank(
+                similarity=similarity, q_pids=qids, g_pids=gallery_ids,
+                max_rank=10, get_mAP=True)
+            return cmc.cpu().numpy(), float(mean_ap.cpu()), float(mean_inp.cpu()), similarity
 
-        t2i_cmc, t2i_mAP, t2i_mINP, _ = rank(similarity=similarity, q_pids=qids, g_pids=gids, max_rank=10, get_mAP=True)
-        t2i_cmc, t2i_mAP, t2i_mINP = t2i_cmc.numpy(), t2i_mAP.numpy(), t2i_mINP.numpy()
+        base_cmc, base_map, base_minp, base_similarity = retrieval_metrics(
+            base_gfeats, base_gids)
+        t2i_cmc, t2i_mAP, t2i_mINP, similarity = retrieval_metrics(gfeats, gids)
         table = PrettyTable(["task", "R1", "R5", "R10", "mAP", "mINP"])
-        table.add_row(['t2i', t2i_cmc[0], t2i_cmc[4], t2i_cmc[9], t2i_mAP, t2i_mINP])
+        table.add_row(['t2i-base', *base_cmc[[0, 4, 9]], base_map, base_minp])
+        if getattr(model, 'gallery_context_enabled', False):
+            table.add_row(['t2i-hard-contrastive', *t2i_cmc[[0, 4, 9]], t2i_mAP, t2i_mINP])
 
         if i2t_metric:
             i2t_cmc, i2t_mAP, i2t_mINP, _ = rank(similarity=similarity.t(), q_pids=gids, g_pids=qids, max_rank=10, get_mAP=True)
@@ -122,6 +121,11 @@ class Evaluator():
             'text_to_image_r10': float(t2i_cmc[9]),
             'text_to_image_mAP': float(t2i_mAP),
             'text_to_image_mINP': float(t2i_mINP),
+            'base_text_to_image_r1': float(base_cmc[0]),
+            'base_text_to_image_r5': float(base_cmc[4]),
+            'base_text_to_image_r10': float(base_cmc[9]),
+            'base_text_to_image_mAP': base_map,
+            'base_text_to_image_mINP': base_minp,
         }
         if return_metrics:
             return metrics
